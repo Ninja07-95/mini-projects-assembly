@@ -1,5 +1,8 @@
 global _start
 
+; =========================
+; DATA
+; =========================
 section .data
     prompt      db "my-shell> ", 0
     prompt_len  equ $ - prompt
@@ -10,23 +13,28 @@ section .data
     exit_cmd    db "exit", 0
     help_cmd    db "help", 0
 
-    bin_prefix  db "/bin/", 0
-
+; =========================
+; BSS
+; =========================
 section .bss
     cmd     resb 64
     argv    resq 2          ; argv[0], NULL
 
+; =========================
+; TEXT
+; =========================
 section .text
+
 _start:
 shell_loop:
-    ; print prompt
+    ; write(prompt)
     mov rax, 1
     mov rdi, 1
     mov rsi, prompt
     mov rdx, prompt_len
     syscall
 
-    ; read command
+    ; read(cmd)
     mov rax, 0
     mov rdi, 0
     mov rsi, cmd
@@ -35,24 +43,24 @@ shell_loop:
 
     ; remove newline
     mov rcx, cmd
-clean:
+.clean:
     cmp byte [rcx], 10
-    je done_clean
+    je .done_clean
     cmp byte [rcx], 0
-    je done_clean
+    je .done_clean
     inc rcx
-    jmp clean
-done_clean:
+    jmp .clean
+.done_clean:
     mov byte [rcx], 0
 
-    ; check "exit"
+    ; if exit
     mov rsi, cmd
     mov rdi, exit_cmd
     call strcmp
     test rax, rax
     je exit_shell
 
-    ; check "help"
+    ; if help
     mov rsi, cmd
     mov rdi, help_cmd
     call strcmp
@@ -60,13 +68,13 @@ done_clean:
     je show_help
 
     ; fork
-    mov rax, 57         ; sys_fork
+    mov rax, 57             ; sys_fork
     syscall
     test rax, rax
     jz child
 
-    ; parent
-    mov rax, 61         ; sys_wait4
+    ; parent: wait
+    mov rax, 61             ; sys_wait4
     mov rdi, -1
     xor rsi, rsi
     xor rdx, rdx
@@ -74,6 +82,9 @@ done_clean:
     syscall
     jmp shell_loop
 
+; =========================
+; CHILD
+; =========================
 child:
     ; argv[0] = cmd
     mov qword [argv], cmd
@@ -86,9 +97,8 @@ child:
     xor rdx, rdx
     syscall
 
-    ; fallback: try /bin/cmd
-    mov rdi, bin_prefix
-;    call concat
+    ; fallback: /bin/cmd
+    call concat
 
     mov rax, 59
     mov rdi, cmd
@@ -96,11 +106,14 @@ child:
     xor rdx, rdx
     syscall
 
-    ; if exec fails
+    ; exec failed
     mov rax, 60
     mov rdi, 1
     syscall
 
+; =========================
+; HELP
+; =========================
 show_help:
     mov rax, 1
     mov rdi, 1
@@ -109,14 +122,18 @@ show_help:
     syscall
     jmp shell_loop
 
+; =========================
+; EXIT
+; =========================
 exit_shell:
     mov rax, 60
     xor rdi, rdi
     syscall
 
-; -------------------------
+; =========================
 ; strcmp(rsi, rdi)
 ; return rax = 0 if equal
+; =========================
 strcmp:
 .loop:
     mov al, [rsi]
@@ -133,4 +150,38 @@ strcmp:
     ret
 .ne:
     mov rax, 1
+    ret
+
+; =========================
+; concat
+; cmd = "/bin/" + cmd
+; =========================
+concat:
+    ; find end of cmd
+    mov rsi, cmd
+.find_end:
+    cmp byte [rsi], 0
+    je .shift
+    inc rsi
+    jmp .find_end
+
+.shift:
+    mov rcx, rsi
+    add rcx, 5              ; space for "/bin/"
+
+.shift_loop:
+    mov al, [rsi]
+    mov [rcx], al
+    dec rsi
+    dec rcx
+    cmp rsi, cmd
+    jl .write_prefix
+    jmp .shift_loop
+
+.write_prefix:
+    mov byte [cmd], '/'
+    mov byte [cmd+1], 'b'
+    mov byte [cmd+2], 'i'
+    mov byte [cmd+3], 'n'
+    mov byte [cmd+4], '/'
     ret
