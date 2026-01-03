@@ -19,7 +19,7 @@ section .data
 section .bss
     cmd     resb 64
     argv    resq 2          ; argv[0], NULL
-
+    pathbuf resb 64
 ; =========================
 ; TEXT
 ; =========================
@@ -81,35 +81,33 @@ shell_loop:
     xor r10, r10
     syscall
     jmp shell_loop
-
-; =========================
+;========================
 ; CHILD
-; =========================
+; =======================
+
 child:
-    ; argv[0] = cmd
-    mov qword [argv], cmd
-    mov qword [argv+8], 0
+    call parse_args
 
-    ; execve(cmd, argv, NULL)
+    ; try execve(argv[0])
     mov rax, 59
-    mov rdi, cmd
+    mov rdi, [argv]
     mov rsi, argv
     xor rdx, rdx
     syscall
 
-    ; fallback: /bin/cmd
-    call concat
+    ; fallback: /bin/argv[0]
+    call build_path
 
     mov rax, 59
-    mov rdi, cmd
+    mov rdi, pathbuf
     mov rsi, argv
     xor rdx, rdx
     syscall
 
-    ; exec failed
     mov rax, 60
     mov rdi, 1
     syscall
+
 
 ; =========================
 ; HELP
@@ -184,4 +182,77 @@ concat:
     mov byte [cmd+2], 'i'
     mov byte [cmd+3], 'n'
     mov byte [cmd+4], '/'
+    ret
+
+; =========================
+; parse_args
+; builds argv[] from cmd
+; =========================
+parse_args:
+    mov rsi, cmd          ; scan pointer
+    mov rdi, argv         ; argv pointer
+    xor rcx, rcx          ; arg count
+
+    ; argv[0] = cmd
+    mov qword [rdi], cmd
+    add rdi, 8
+    inc rcx
+
+.scan:
+    mov al, [rsi]
+    test al, al
+    je .done
+
+    cmp al, ' '
+    jne .next
+
+    mov byte [rsi], 0     ; terminate word
+
+.skip_spaces:
+    inc rsi
+    cmp byte [rsi], ' '
+    je .skip_spaces
+
+    cmp byte [rsi], 0
+    je .done
+
+    mov qword [rdi], rsi  ; argv[n] = &word
+    add rdi, 8
+    inc rcx
+    cmp rcx, 7
+    je .done
+
+.next:
+    inc rsi
+    jmp .scan
+
+.done:
+    mov qword [rdi], 0    ; NULL
+    ret
+; =========================
+; build_path
+; pathbuf = "/bin/" + argv[0]
+; =========================
+build_path:
+    mov rsi, [argv]        ; argv[0]
+    mov rdi, pathbuf
+
+    ; write "/bin/"
+    mov byte [rdi], '/'
+    mov byte [rdi+1], 'b'
+    mov byte [rdi+2], 'i'
+    mov byte [rdi+3], 'n'
+    mov byte [rdi+4], '/'
+    add rdi, 5
+
+.copy:
+    mov al, [rsi]
+    mov [rdi], al
+    test al, al
+    je .done
+    inc rsi
+    inc rdi
+    jmp .copy
+
+.done:
     ret
